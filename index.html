@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="bluez-web-bluetooth" content="width=device-width, initial-scale=1.0">
+        <title>Document</title>
+        <script src="telink-thermometer.js"></script>
+
+    </head>
+    <style>
+      html { margin: 0; padding: 0; border: 0; }
+      body { font-family: 'Raleway', sans-serif; color: #d7ecfb; background-color: #072b44; text-align: center; }
+      textarea{color:greenyellow; background-color:black;}
+    </style>
+    <body>
+      <div id="main" style="width: 1450px;float: left;">
+        <h3>Web Bluetooth thermometer Measurement</h3><hr>
+        <div id="showlog" style="width: 700px;float: left;">
+          <button style="float: left;" onclick="clearLoginfo()">clear log</button>
+          <button id="btn-connect" onclick="clickConnect()">scan bluetooth</button>
+          <button id="btn-disconnet" onclick="deviceDisconnect()">Disconnect</button><br><br>
+          <textarea id="log" cols="90" rows="20" readonly="readonly"></textarea>
+        </div>
+        <div id="drop" style="width: 700px; height: 350px; float: right; background-color:#072b44">
+          <br><br>
+          <div id="statusText">Thermometer Info</div><br><br><br><br>
+          <p id="therm-type" style="float: left;">thermometer type:</p><br><br><br><br>
+          <p id="therm-value" style="float: left;">thermometer value:</p>
+        </div>
+      </div>
+
+    </body>
+</html>
+
+<script>
+
+    var blockCount,firmwareArray = "";            //ota-file
+    var startTime,sendcmd;                        //sendcmd and time
+    var last4byte,OTAversion=0,actionOTA_03ff=0;  //version check and authentication
+    var ServiceMain,nitifiyCharTemp;              //2b12notify
+    var OTApause=1,OTApuasecount=0;               //OTA-puase,count
+    var heartRates = [];
+    var mode = 'bar';
+
+    var fanlight = new Fanlight();
+
+    /**
+     * @clickConnect
+     * Scan and connect to nearby Bluetooth devices
+    */
+    function clickConnect(){
+      fanlight.request().then(connt => {
+        addLoginfo("Bluetooth connection successful");
+      })
+      .catch(error => {
+        addLoginfo('Argh! ' + error);
+      });
+    }
+ 
+  /**
+   * @bytesToHex
+   * Convert ByteArray to hex
+   */
+  function bytesToHex(data) {
+    return new Uint8Array(data).reduce(function(memo, i) {
+        return memo + ("0" + i.toString(16)).slice(-2);
+    }, "");
+  }
+
+  /**
+   * @hexToBytes
+   * Convert hex to ByteArray
+   */
+  function hexToBytes(hex) {
+    for (var bytes = [], c = 0; c < hex.length; c += 2)
+        bytes.push(parseInt(hex.substr(c, 2), 16));
+    return new Uint8Array(bytes);
+  }
+
+  /**
+   * @addLoginfo
+   * Displays the interaction information in the log box on the web page
+   */
+  function addLoginfo(logTXT) {
+    var time = new Date().toLocaleTimeString("de-DE");
+    var logString = time + ": > " + logTXT;
+    document.getElementById("log").innerHTML += logString + "\n";
+  }
+
+  /**
+   * @clearLoginfo
+   * Clear the information in the log box
+   */
+  function clearLoginfo() {
+    document.getElementById("log").value= "";
+  }
+
+  /**
+   * @Failed_info
+   * Display exception information
+   */
+  function Failed_info(err) {
+    addLoginfo("Update error: " + err);
+    setStatus("Update error: " + err);
+  }
+
+  /**
+   * @deviceDisconnect
+   * device disconnect
+   */
+  function deviceDisconnect() {
+    fanlight.disconnect();
+  }
+
+  /**
+   * @OTA_Authorization
+   * Process feedback after a command is sent
+   */
+  function Data_info_manage(gattServer) {
+    heartRates = [];
+    gattServer.getPrimaryService("00001809-0000-1000-8000-00805f9b34fb")
+      .then(service => {
+        addLoginfo("found thermometer service");
+        console.log(service);
+        ServiceMain = service;
+        return ServiceMain.getCharacteristic("00002a1c-0000-1000-8000-00805f9b34fb");
+      })
+      .then(characteristic => {
+        addLoginfo('Found thermometer characteristic');
+        console.log(characteristic);
+        console.log(characteristic.properties);
+        nitifiyCharTemp = characteristic;
+        return nitifiyCharTemp.startNotifications();
+      })
+      .then(() => {
+        nitifiyCharTemp.addEventListener('characteristicvaluechanged', event => {
+            var souvalue = event.target.value;
+            console.log(souvalue);
+            var ntvalue = bytesToHex(souvalue.buffer);
+            addLoginfo("notify-value: " + ntvalue);
+            author_log();
+            var thermt = ntvalue.slice(25,26);
+            var therm_T = parseInt(thermt,16);
+            //addLoginfo("get value:" + therm_T);
+            var therm_type_va = thermometer_type(therm_T);
+            document.getElementById("therm-type").innerHTML = "thermometer type -->: " + therm_type_va;
+
+            var thermv = ntvalue.slice(2,10);
+            var thermvarry = "";
+            thermvarry = ntvalue.slice(8,10);
+            thermvarry = thermvarry + ntvalue.slice(6,8);
+            thermvarry = thermvarry + ntvalue.slice(4,6);
+            thermvarry = thermvarry + ntvalue.slice(2,4);
+            var therm_data = parseInt(thermvarry,16);
+            //addLoginfo("get value:" + therm_data);
+            document.getElementById("therm-value").innerHTML = "thermometer Value -->: " + therm_data + "℃";
+        }).catch(error => console.log(error));
+      });
+  }
+
+  function author_log(){
+    var obj = document.getElementById("log");
+    obj.scrollTop = obj.scrollHeight;
+  }
+
+  function thermometer_type(data){
+    var type_value = "";
+    switch(data){
+      case 1:
+        type_value = "armpit";
+        break;
+      case 2:
+        type_value = "body";
+        break;
+      case 3:
+        type_value = "ear";
+        break;
+      case 4:
+        type_value = "finger";
+        break;
+      case 5:
+        type_value = "gastro intestinal tract";
+        break;
+      case 6:
+        type_value = "mouth";
+        break;
+      case 7:
+        type_value = "rectum";
+        break;
+      case 8:
+        type_value = "toe";
+        break;
+      case 9:
+        type_value = "ear drum";
+        break;
+      default:
+        break;
+    }
+    return type_value;
+  }
+
+</script>
